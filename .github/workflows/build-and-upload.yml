@@ -1,0 +1,20 @@
+name: Build and Upload to IPFS
+on: 
+  pull_request:
+    branches:
+      - master
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v1
+        with:
+          node-version: '12'
+      - run: npm config set user 0 # required to bypass permission denied error
+      - run: npm config set unsafe-perm true # required to bypass permission denied error
+      - run: npm i -g git+https://github.com/AvadoDServer/AVADOSDK.git
+      - run: curl -L "https://github.com/docker/compose/releases/download/1.29.1/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+      - run: chmod +x /usr/local/bin/docker-compose
+      - run: avadosdk build --provider http://80.208.229.228:5001
+      # - run: Send a request to rpc backend to release the new version.

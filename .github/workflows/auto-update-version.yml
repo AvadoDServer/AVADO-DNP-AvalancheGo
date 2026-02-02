@@ -1,0 +1,122 @@
+name: Auto Update AvalancheGo Version
+
+on:
+  schedule:
+    # Check for new releases every day at 00:00 UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  check-and-update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest AvalancheGo release
+        id: latest_release
+        run: |
+          # Fetch the latest release from AvalancheGo
+          LATEST_VERSION=$(curl -s \
+            https://api.github.com/repos/ava-labs/avalanchego/releases/latest \
+            | jq -r .tag_name)
+          echo "Latest AvalancheGo version: $LATEST_VERSION"
+          echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Get current upstream version
+        id: current_version
+        run: |
+          CURRENT_VERSION=$(jq -r .upstream dappnode_package.json)
+          echo "Current upstream version: $CURRENT_VERSION"
+          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Compare versions
+        id: compare
+        run: |
+          LATEST="${{ steps.latest_release.outputs.latest_version }}"
+          CURRENT="${{ steps.current_version.outputs.current_version }}"
+          if [ "$LATEST" != "$CURRENT" ]; then
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+            echo "New version available: $LATEST"
+          else
+            echo "needs_update=false" >> $GITHUB_OUTPUT
+            echo "Already up to date"
+          fi
+
+      - name: Bump package version
+        if: steps.compare.outputs.needs_update == 'true'
+        id: bump_version
+        run: |
+          # Get current package version
+          CURRENT_PKG_VERSION=$(jq -r .version dappnode_package.json)
+          echo "Current package version: $CURRENT_PKG_VERSION"
+
+          # Increment patch version
+          IFS='.' read -ra VERSION_PARTS <<< "$CURRENT_PKG_VERSION"
+          MAJOR=${VERSION_PARTS[0]}
+          MINOR=${VERSION_PARTS[1]}
+          PATCH=${VERSION_PARTS[2]}
+          NEW_PATCH=$((PATCH + 1))
+          NEW_PKG_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+
+          echo "New package version: $NEW_PKG_VERSION"
+          echo "new_pkg_version=$NEW_PKG_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Update dappnode_package.json
+        if: steps.compare.outputs.needs_update == 'true'
+        run: |
+          # Update version and upstream in dappnode_package.json
+          jq --arg version "${{ steps.bump_version.outputs.new_pkg_version }}" \
+             --arg upstream "${{ steps.latest_release.outputs.latest_version }}" \
+             '.version = $version | .upstream = $upstream' \
+             dappnode_package.json > dappnode_package.json.tmp
+          mv dappnode_package.json.tmp dappnode_package.json
+
+      - name: Update docker-compose.yml
+        if: steps.compare.outputs.needs_update == 'true'
+        run: |
+          # Update image version and VERSION build arg
+          NEW_PKG_VERSION="${{ steps.bump_version.outputs.new_pkg_version }}"
+          NEW_UPSTREAM="${{ steps.latest_release.outputs.latest_version }}"
+          sed -i \
+            "s|image: 'avalanchego.avado.dnp.dappnode.eth:.*'|image: 'avalanchego.avado.dnp.dappnode.eth:$NEW_PKG_VERSION'|g" \
+            docker-compose.yml
+          sed -i "s|VERSION=.*|VERSION=$NEW_UPSTREAM|g" docker-compose.yml
+
+      - name: Create Pull Request
+        if: steps.compare.outputs.needs_update == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: >-
+            Update to AvalancheGo
+            ${{ steps.latest_release.outputs.latest_version }}
+          title: >-
+            Update to AvalancheGo
+            ${{ steps.latest_release.outputs.latest_version }}
+          body: |
+            ## Automated Version Update
+
+            This PR updates the package to use the latest AvalancheGo release.
+
+            **Changes:**
+            - Package version: `${{ steps.current_version.outputs.current_version }}`
+              → `${{ steps.bump_version.outputs.new_pkg_version }}`
+            - Upstream version: `${{ steps.current_version.outputs.current_version }}`
+              → `${{ steps.latest_release.outputs.latest_version }}`
+
+            **Release Notes:**
+            https://github.com/ava-labs/avalanchego/releases/tag/${{ steps.latest_release.outputs.latest_version }}
+
+            cc @flisko
+          branch: "auto-update-${{ steps.latest_release.outputs.latest_version }}"
+          delete-branch: true
+          labels: |
+            automated
+            version-update

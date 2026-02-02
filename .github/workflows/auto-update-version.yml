@@ -93,7 +93,7 @@ jobs:
         if: steps.compare.outputs.needs_update == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PAT_TOKEN }}
           commit-message: >-
             Update to AvalancheGo
             ${{ steps.latest_release.outputs.latest_version }}

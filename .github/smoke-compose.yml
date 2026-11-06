@@ -1,0 +1,7 @@
+# Start test in CI (AvadoDServer/ci-build-action/smoke): CI runners cannot
+# look up their public IP reliably (the lookup service answers some of them
+# with a Cloudflare challenge page and avalanchego then exits), so give it one.
+services:
+  avalanchego.avado.dnp.dappnode.eth:
+    environment:
+      - EXTRA_OPTS=--public-ip=127.0.0.1
